@@ -23,6 +23,7 @@ import {
   thinkingModeFor,
   roleThinkingParams,
   ROLE,
+  closeRoom,
 } from '../lib/core.js'
 
 const mk = (over = {}) => normalizeConfig({
@@ -353,4 +354,72 @@ test('moderatorThinking 支持 auto，映射成不干预', () => {
 test('非法 moderatorThinking 回落默认值', () => {
   assert.equal(normalizeConfig({ moderatorThinking: '乱写' }).moderatorThinking, 'on')
   assert.equal(normalizeConfig({ moderatorThinking: '' }).moderatorThinking, 'on')
+})
+
+/* ─────────────────────── 纪要独立开关 ─────────────────────── */
+
+test('纪要默认关思考，调度默认开——两者互不影响', () => {
+  const cfg = normalizeConfig({})
+  assert.equal(cfg.moderatorThinking, 'on', '调度员默认开')
+  assert.equal(cfg.noteThinking, 'off', '纪要默认关')
+
+  const seat = { thinking: 'auto' }
+  assert.equal(thinkingModeFor(cfg, seat, ROLE.moderator), 'on')
+  assert.equal(thinkingModeFor(cfg, seat, ROLE.note), 'off')
+  assert.equal(thinkingModeFor(cfg, seat, ROLE.speaker), 'auto')
+})
+
+test('三个角色可以各设各的，互不串味', () => {
+  const cfg = normalizeConfig({ moderatorThinking: 'off', noteThinking: 'on' })
+  const seat = { thinking: 'auto' }
+  assert.equal(thinkingModeFor(cfg, seat, ROLE.moderator), 'off')
+  assert.equal(thinkingModeFor(cfg, seat, ROLE.note), 'on')
+  assert.equal(thinkingModeFor(cfg, seat, ROLE.speaker), 'auto')
+})
+
+test('关掉调度员思考后，纪要不会被连带关掉', () => {
+  const cfg = normalizeConfig({ moderatorThinking: 'off', noteThinking: 'auto' })
+  assert.equal(thinkingModeFor(cfg, {}, ROLE.moderator), 'off')
+  assert.equal(thinkingModeFor(cfg, {}, ROLE.note), 'auto', '纪要跟自己的设置走')
+})
+
+test('纪要请求带 noteThinking 的参数，与调度请求不同', async () => {
+  const calls = []
+  const cfg = normalizeConfig({
+    moderatorThinking: 'on',
+    noteThinking: 'off',
+    participants: [
+      { name: 'A', baseUrl: 'https://ark.cn-beijing.volces.com/api/v3', model: 'm', apiKey: 'k1', thinking: 'off' },
+      { name: 'B', baseUrl: 'https://b.test/v1', model: 'm', apiKey: 'k2' },
+    ],
+  })
+  const room = openRoom(cfg, '纪要开关', {})
+
+  const fetchImpl = async (_u, init) => {
+    const b = JSON.parse(init.body)
+    const sys = String(b.messages[0].content)
+    const kind = sys.includes('调度员') ? 'moderator' : sys.includes('记录员') ? 'note' : 'speaker'
+    calls.push({ kind, thinking: b.thinking ?? null, max_tokens: b.max_tokens })
+    if (kind === 'moderator') return sched('A')
+    if (kind === 'note') return speaker({ content: '## 出现了哪些角度\n纪要' })
+    return speaker({ content: '发言' })
+  }
+
+  for (let i = 0; i < 3; i++) await nextTurn(cfg, room, fetchImpl)
+  await closeRoom(cfg, room, fetchImpl)
+
+  const mod = calls.find((c) => c.kind === 'moderator')
+  const note = calls.find((c) => c.kind === 'note')
+  assert.ok(mod, '应该有调度员调用')
+  assert.ok(note, '应该有纪要调用')
+  assert.deepEqual(mod.thinking, { type: 'enabled' }, '调度开思考')
+  assert.deepEqual(note.thinking, { type: 'disabled' }, '纪要关思考')
+})
+
+test('纪要关思考时预算也更省', async () => {
+  const cfg = normalizeConfig({ noteThinking: 'off', maxWordsPerTurn: 300 })
+  // 纪要只输出四个标题，不需要 300 字发言量的预算那么宽
+  const noteBudget = maxTokensFor(cfg, { ...cfg.participants[0], thinking: 'off' })
+  const modBudget = maxTokensFor(cfg, { ...cfg.participants[0], thinking: 'on' })
+  assert.ok(noteBudget <= modBudget, '不思考时不该比思考时还贵')
 })

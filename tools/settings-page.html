@@ -143,12 +143,19 @@ function paint(){
         <option value="auto"${d.moderatorThinking==='auto'?' selected':''}>跟随供应商</option>
         <option value="off"${d.moderatorThinking==='off'?' selected':''}>关闭</option>
       </select></div>
+      <div class="f"><label>纪要思考</label><select data-f="noteThinking">
+        <option value="off"${(d.noteThinking||'off')==='off'?' selected':''}>关闭（推荐）</option>
+        <option value="auto"${d.noteThinking==='auto'?' selected':''}>跟随供应商</option>
+        <option value="on"${d.noteThinking==='on'?' selected':''}>开启</option>
+      </select></div>
+    </div>
+    <div class="row two">
       <div class="f"><label>显示思考过程</label><select data-f="showThinking">
         <option value="off"${d.showThinking!==true?' selected':''}>不显示（推荐）</option>
         <option value="on"${d.showThinking===true?' selected':''}>折叠显示</option>
       </select></div>
     </div>
-    <div class="hint">调度员要读完整场再判断，值得开思考；发言席位相反——开思考慢 3–4 倍、贵一倍，还容易把「各有道理」这类话术带回来。<strong>思考不会进入讨论记录，也不会被其他席位看到</strong>。</div>
+    <div class="hint">调度员要读完整场再判断，值得开思考；纪要只做归类，开思考是浪费；发言席位相反——开思考慢 3–4 倍、贵一倍，还容易把「各有道理」这类话术带回来。<strong>思考不会进入讨论记录，也不会被其他席位看到</strong>。</div>
   </div>
 
   <div class="card">

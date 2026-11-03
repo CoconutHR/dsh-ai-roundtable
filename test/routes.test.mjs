@@ -264,20 +264,39 @@ test('未知路由 404', async () => {
   assert.equal(res.status, 404)
 })
 
-test('思考策略能保存并回显（调度员 / 显示开关）', async () => {
+test('思考策略能保存并回显（调度员 / 纪要 / 显示开关）', async () => {
   const { h, get } = handlerWith(baseConfig())
   await call(h, 'POST', '/dsh-roundtable/config', {
     ...baseConfig(),
     moderatorThinking: 'off',
+    noteThinking: 'on',
     showThinking: true,
   })
 
   assert.equal(get().moderatorThinking, 'off')
+  assert.equal(get().noteThinking, 'on')
   assert.equal(get().showThinking, true)
 
   const view = await call(h, 'GET', '/dsh-roundtable/config')
   assert.equal(view.body.config.moderatorThinking, 'off')
+  assert.equal(view.body.config.noteThinking, 'on')
   assert.equal(view.body.config.showThinking, true)
+})
+
+test('纪要思考默认关，且能独立于调度员设置', async () => {
+  const { h, get } = handlerWith(baseConfig())
+  await call(h, 'POST', '/dsh-roundtable/config', { ...baseConfig(), moderatorThinking: 'on' })
+  assert.equal(get().noteThinking, 'off', '不传就是默认关')
+
+  await call(h, 'POST', '/dsh-roundtable/config', { ...baseConfig(), moderatorThinking: 'off', noteThinking: 'on' })
+  assert.equal(get().moderatorThinking, 'off')
+  assert.equal(get().noteThinking, 'on', '关掉调度思考不该连带关掉纪要')
+})
+
+test('非法 noteThinking 回落成关闭', async () => {
+  const { h, get } = handlerWith(baseConfig())
+  await call(h, 'POST', '/dsh-roundtable/config', { ...baseConfig(), noteThinking: '乱写' })
+  assert.equal(get().noteThinking, 'off')
 })
 
 test('非法 moderatorThinking 回落成开启', async () => {

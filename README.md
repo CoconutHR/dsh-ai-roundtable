@@ -3,7 +3,7 @@
 `dsh-ai-roundtable` · 一个 DeepSeek Harness 插件。几个 AI 就同一议题展开探讨：首轮互不可见，
 之后由中立调度员决定谁发言；收场只交三样东西，判断留给你。
 
-![version](https://img.shields.io/badge/version-1.3.0-4d6bfe)
+![version](https://img.shields.io/badge/version-1.4.0-4d6bfe)
 ![license](https://img.shields.io/badge/license-MIT-green)
 ![dsh](https://img.shields.io/badge/DSH-0.2.1--rc.3-lightgrey)
 
@@ -100,7 +100,7 @@ Requires DeepSeek Harness `0.2.1-rc.3` (tested). Licensed MIT.
 
 - 席位：名字 / 接口地址 / 模型 / key（只显示掩码）/ 人设 / **思考模式**
 - 我的席位：称呼、参与方式
-- 探讨规则：调度员、轮数、**调度员思考**、**是否显示思考过程**
+- 探讨规则：调度员、轮数、**调度员思考**、**纪要思考**、**是否显示思考过程**
 - 讨论风格：六选一，自动带推荐温度
 - 预算：字数、温度、超时、重试次数、连续失败阈值
 
@@ -108,12 +108,15 @@ Requires DeepSeek Harness `0.2.1-rc.3` (tested). Licensed MIT.
 
 ### 思考模式
 
-不同角色要的东西正相反，所以拆成两个开关：
+三个角色对推理的需求各不相同，所以拆成三个开关：
 
 | 开关 | 管谁 | 默认 | 理由 |
 |---|---|---|---|
-| `moderatorThinking` | 调度员 + 纪要 | `on` | 要读完整场记录再判断谁该说、是否收敛 —— 真正的深推理 |
-| `seat.thinking` | 这个席位自己发言 | `auto` | 发言要尖锐具体；开思考慢 3–4 倍、贵一倍，还容易和稀泥 |
+| `moderatorThinking` | 调度员 | `on` | 要读完整场记录再判断谁该说、是否收敛 —— 真正的深推理 |
+| `noteThinking` | 纪要 | `off` | 只做「把讨论摊开、按四个标题归类」的格式化工作，开思考是纯浪费 |
+| `seat.thinking` | 该席位自己发言 | `auto` | 发言要尖锐具体；开思考慢 3–4 倍、贵一倍，还容易和稀泥 |
+
+三者互不影响：关掉调度员思考，不会连带关掉纪要；反过来也一样。
 
 每个开关都支持三档：
 
