@@ -10,6 +10,8 @@ import { join } from 'node:path'
 
 // 隔离：插件启动会读 RT_STORE_PATH，不隔离就会读到用户真实配置，测试随环境飘。
 process.env.RT_STORE_PATH = join(tmpdir(), `rt-test-store-${process.pid}.json`)
+// 房间存档也要隔离：apply() 会挂上持久化后端，否则测试房间会写进用户真实目录。
+process.env.RT_ROOMS_PATH = join(tmpdir(), `rt-test-rooms-${process.pid}.json`)
 
 const stubUrl = new URL('./stub-tools.mjs', import.meta.url).href
 const stubSchemaUrl = new URL('./stub-schemastery.mjs', import.meta.url).href

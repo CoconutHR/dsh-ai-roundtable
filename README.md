@@ -3,7 +3,7 @@
 `dsh-ai-roundtable` · 一个 DeepSeek Harness 插件。几个 AI 就同一议题展开探讨：首轮互不可见，
 之后由中立调度员决定谁发言；收场只交三样东西，判断留给你。
 
-![version](https://img.shields.io/badge/version-1.1.0-4d6bfe)
+![version](https://img.shields.io/badge/version-1.2.0-4d6bfe)
 ![license](https://img.shields.io/badge/license-MIT-green)
 ![dsh](https://img.shields.io/badge/DSH-0.2.1--rc.3-lightgrey)
 
@@ -221,13 +221,14 @@ roundtable({action:"close", roomId:"rt-xxxx"})     → 纪要 + 全文
 ## 代码结构
 
 ```
-lib/core.js     纯逻辑：HTTP 调用、重试、调度决策、状态机、JSON 解析
-lib/index.js    Cordis 包装：defineTool 注册、参数校验、错误转人话
-lib/store.js    配置存储：掩码、按名继承 key、写操作来源校验
-lib/routes.js   设置页后端：GET/POST config、试连接
-lib/client.js   DSH 内嵌设置页（浏览器 bundle）
-test/           76 个用例，node --test 直接跑
-scripts/        安装 / 卸载 profile 的幂等脚本
+lib/core.js        纯逻辑：HTTP 调用、重试、调度决策、状态机、JSON 解析
+lib/index.js       Cordis 包装：defineTool 注册、参数校验、错误转人话
+lib/store.js       配置存储：掩码、按名继承 key、写操作来源校验
+lib/rooms-store.js 房间存档：编解码、原子写、过期清理
+lib/routes.js      设置页后端：GET/POST config、试连接
+lib/client.js      DSH 内嵌设置页（浏览器 bundle）
+test/              96 个用例，node --test 直接跑
+scripts/           安装 / 卸载 profile 的幂等脚本
 ```
 
 跑测试：
@@ -236,23 +237,58 @@ scripts/        安装 / 卸载 profile 的幂等脚本
 node --test test/*.test.mjs
 ```
 
-测试分四层：
+测试分五层：
 
 - `core.test.mjs` —— 纯逻辑（协议识别、地址拼接、状态机、提示词）
 - `resilience.test.mjs` —— 重试策略、失败记账、席位请出、取消语义
+- `rooms.test.mjs` —— 房间持久化：编解码、跨重启恢复、密钥不落盘
 - `routes.test.mjs` —— 设置页后端与写操作鉴权
 - `contract.test.mjs` —— 工具定义形状（参数 DSL、输出 schema、render 内容块）
+
+> 测试用 `RT_STORE_PATH` / `RT_ROOMS_PATH` 把存储指到临时目录。**不要只改 `HOME`**：
+> Windows 上 `os.homedir()` 读的是 `USERPROFILE`，早先那样写会让测试覆盖用户的真实配置。
 
 `contract.test.mjs` 用 `module.registerHooks` 把 `@deepseek-ai/dsh-tools` 换成桩，
 所以**不需要启动 DSH** 就能验证工具契约。
 
 ## 已知限制
 
-- **房间状态在进程内**：重启应用后房间全丢；多会话共用一个 roomId 会串
 - **串行**：没标 `isConcurrencySafe`，同一时刻只能推一场
 - **一轮 = 每人各说一次**，`maxRounds: 2` 就是每人最多说两次
 - **重试会放大延迟**：一个慢席位最坏要等 `timeoutMs × (maxRetries+1)`，需要更快就把 `maxRetries` 调成 0
 - **配额按调用计**：重试是真调用，429 重试三次就是三次计费尝试（多数供应商限流请求不计费，但不保证）
+- **房间存档不含 apiKey**：重启续聊靠当前配置回填密钥，所以**删掉席位再重启，那个席位就接不上了**
+- **房间仍不跨机器共享**：存档在本机 `~/.dsh/roundtable-rooms.json`，拷到别的机器上只有记录，没有密钥
+
+## 房间持久化
+
+房间会落盘到 `~/.dsh/roundtable-rooms.json`，重启 DeepSeek 后仍能接着说：
+
+```
+roundtable({action:"list"})                      → 看每间房聊到第几轮
+roundtable({action:"next", roomId:"rt-xxxx"})    → 重启后照常续聊
+```
+
+存档里有什么、没有什么：
+
+| 存 | 不存 |
+|---|---|
+| 议题、风格、轮数上限 | **apiKey**（一个字节都不写） |
+| 全部发言与插话（每场最多 400 条） | 运行时临时状态 |
+| 席位名 / 地址 / 模型 / 人设 | 别的房间的密钥 |
+| 谁被请出讨论、连续失败计数 | |
+
+**为什么不存 key**：房间只需要知道"谁在席上"，发请求用的密钥永远来自当前配置。
+把 key 抄进房间存档，等于在磁盘上多留一份明文副本，还会跟着讨论记录一起被备份或分享。
+代价是重启后要用当前配置回填 —— 这也是为什么删掉的席位接不上。
+
+其他行为：
+
+- 开房、发言、插话、删房都会**立刻落盘**（临时文件 + rename，避免写一半留下坏 JSON）
+- 没落盘成功的讨论照常进行，只是重启后接不上（写盘失败不打断讨论）
+- 房间闲置 **7 天**后自动清理；清理结果也会落盘
+- 存档损坏或字段残缺时**整份丢弃**，不会因为一个坏文件让插件加载失败
+- 关掉持久化（不注入后端）就退回 1.1.0 的纯进程内行为，测试里就是这么隔离的
 
 ## 卸载
 

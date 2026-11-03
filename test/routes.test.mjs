@@ -1,5 +1,9 @@
 /**
- * 设置页后端路由的测试：不动真实 profile，HOME 指到临时目录。
+ * 设置页后端路由的测试：不动真实 profile。
+ *
+ * 隔离必须用 RT_STORE_PATH，不能只改 HOME：
+ * Windows 上 os.homedir() 读的是 USERPROFILE 而不是 HOME，
+ * 早先只设置 HOME，导致这些用例把配置写进了用户真实的 ~/.dsh/roundtable.json。
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
@@ -7,7 +11,10 @@ import { mkdtempSync, statSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-process.env.HOME = mkdtempSync(join(tmpdir(), 'rt-home-'))
+const TMP_HOME = mkdtempSync(join(tmpdir(), 'rt-home-'))
+process.env.HOME = TMP_HOME
+process.env.USERPROFILE = TMP_HOME
+process.env.RT_STORE_PATH = join(TMP_HOME, 'roundtable.json')
 
 const { makeHandler, STORE_PATH } = await import('../lib/routes.js')
 const { STORE_PATH: PATH_CHECK } = await import('../lib/store.js')
