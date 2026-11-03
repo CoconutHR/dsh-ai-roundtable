@@ -3,7 +3,7 @@
 `dsh-ai-roundtable` · 一个 DeepSeek Harness 插件。几个 AI 就同一议题展开探讨：首轮互不可见，
 之后由中立调度员决定谁发言；收场只交三样东西，判断留给你。
 
-![version](https://img.shields.io/badge/version-1.2.0-4d6bfe)
+![version](https://img.shields.io/badge/version-1.3.0-4d6bfe)
 ![license](https://img.shields.io/badge/license-MIT-green)
 ![dsh](https://img.shields.io/badge/DSH-0.2.1--rc.3-lightgrey)
 
@@ -100,13 +100,22 @@ Requires DeepSeek Harness `0.2.1-rc.3` (tested). Licensed MIT.
 
 - 席位：名字 / 接口地址 / 模型 / key（只显示掩码）/ 人设 / **思考模式**
 - 我的席位：称呼、参与方式
-- 探讨规则：调度员、轮数
+- 探讨规则：调度员、轮数、**调度员思考**、**是否显示思考过程**
 - 讨论风格：六选一，自动带推荐温度
-- 预算：字数、温度、超时
+- 预算：字数、温度、超时、重试次数、连续失败阈值
 
 保存后**立即生效**，不用重启。
 
 ### 思考模式
+
+不同角色要的东西正相反，所以拆成两个开关：
+
+| 开关 | 管谁 | 默认 | 理由 |
+|---|---|---|---|
+| `moderatorThinking` | 调度员 + 纪要 | `on` | 要读完整场记录再判断谁该说、是否收敛 —— 真正的深推理 |
+| `seat.thinking` | 这个席位自己发言 | `auto` | 发言要尖锐具体；开思考慢 3–4 倍、贵一倍，还容易和稀泥 |
+
+每个开关都支持三档：
 
 | 值 | 行为 | 什么时候用 |
 |---|---|---|
@@ -118,6 +127,23 @@ Requires DeepSeek Harness `0.2.1-rc.3` (tested). Licensed MIT.
 插件会按供应商翻译成真实参数（火山方舟用 `thinking.type`，OpenAI 用 `reasoning_effort`，
 Anthropic 用顶层 `thinking.budget_tokens` 并自动去掉与之互斥的 `temperature`），
 认不出的网关不猜，留 `extraBody` 兜底。
+
+### 思考过程去哪了
+
+**默认丢弃。** 它不进讨论记录，也不会被其他席位看到 —— 思考里有被自己否定的念头、
+中途推翻的论证、对提示词的反应，把它喂给别的模型，等于把「没想好的东西」当成「说过的话」。
+
+想看的话，把「显示思考过程」打开：思考会以折叠块的形式出现在对话里，**只给你看**，
+仍然不写进 transcript、不喂给其他模型、也不落盘。
+
+### 长度与截断
+
+- `max_tokens` 不再固定 800，而是按 `maxWordsPerTurn` 反推（中文 1 字 ≈ 1.5 token，取 1.6 系数）
+- 发言席位开思考时，正文额度会**额外加上**思考预算，不会出现「思考吃光配额、正文写不出」
+- 撞到长度上限时（`finish_reason: length` / `stop_reason: max_tokens`），
+  记录里会标 `（本条被长度上限截断，末尾不完整）`，后面的人不会把半句话当完整论证来反驳
+- 真被思考吃光正文时，返回的是**可操作的提示**（调大 `max_tokens` 或关掉思考），
+  而不是「模型返回了空内容」—— 这类问题也不会计入席位失败次数
 
 ## 容错与重试
 

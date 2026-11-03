@@ -137,6 +137,18 @@ function paint(){
     </div>
     <label class="check"><input type="checkbox" data-f="blindFirstRound"${d.blindFirstRound!==false?' checked':''}> 首轮互不可见</label>
     <div class="hint">开着时每人第一次开口前看不到别人；关掉更快，但容易互相附和。模型不许替你下结论这条写在提示词里，不设开关。</div>
+    <div class="row two" style="margin-top:10px">
+      <div class="f"><label>调度员思考</label><select data-f="moderatorThinking">
+        <option value="on"${(d.moderatorThinking||'on')==='on'?' selected':''}>开启（推荐）</option>
+        <option value="auto"${d.moderatorThinking==='auto'?' selected':''}>跟随供应商</option>
+        <option value="off"${d.moderatorThinking==='off'?' selected':''}>关闭</option>
+      </select></div>
+      <div class="f"><label>显示思考过程</label><select data-f="showThinking">
+        <option value="off"${d.showThinking!==true?' selected':''}>不显示（推荐）</option>
+        <option value="on"${d.showThinking===true?' selected':''}>折叠显示</option>
+      </select></div>
+    </div>
+    <div class="hint">调度员要读完整场再判断，值得开思考；发言席位相反——开思考慢 3–4 倍、贵一倍，还容易把「各有道理」这类话术带回来。<strong>思考不会进入讨论记录，也不会被其他席位看到</strong>。</div>
   </div>
 
   <div class="card">
@@ -178,6 +190,8 @@ app.addEventListener('input',e=>{
   if(t.type==='checkbox'){state.draft[f]=t.checked;return}
   if(t.dataset.i!==undefined){const s=state.draft.participants[+t.dataset.i];if(s)s[f]=t.value}
   else if(f==='timeoutSec')state.draft.timeoutMs=Number(t.value)*1000
+  // 下拉用字符串表示布尔
+  else if(f==='showThinking')state.draft.showThinking=t.value==='on'
   // 空值不要转成 0：Number('')===0，早先会把温度留空存成 0.0
   else if(['maxRounds','maxWordsPerTurn','temperature','maxRetries','maxSeatFailures'].includes(f))
     state.draft[f]=t.value===''?'':Number(t.value)

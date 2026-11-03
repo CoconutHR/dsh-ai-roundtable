@@ -246,3 +246,53 @@ test('入口不依赖 schemastery（它曾让整个插件加载失败）', async
   assert.deepEqual(mod.inject, ['tools'])
   assert.equal(typeof mod.apply, 'function')
 })
+
+test('预算不足走提示而不是报错，且不会被当成席位故障', async () => {
+  const { def } = await boot()
+  const open = await def.execute({ action: 'open', topic: '预算不足' }, {})
+  globalThis.fetch = async () => ({
+    ok: true,
+    json: async () => ({ choices: [{ message: { content: '', reasoning_content: '烧光预算' } }] }),
+  })
+  const step = await def.execute({ action: 'next', roomId: open.roomId }, {})
+
+  assertShape(def.output.schema, step)
+  assert.equal(step.budgetExhausted, true)
+  assert.equal(step.benched, undefined, '不该请出席位')
+
+  const blocks = def.output.render({}, step)
+  assert.match(blocks[0].text, /token 预算/, '要给出可操作的提示')
+  assert.doesNotMatch(blocks[0].text, /⚠️/, '这不是错误，别用警告图标')
+})
+
+test('截断会在 render 里明确提示', async () => {
+  const { def } = await boot()
+  const open = await def.execute({ action: 'open', topic: '截断提示' }, {})
+  globalThis.fetch = async () => ({
+    ok: true,
+    json: async () => ({
+      choices: [{ message: { content: '半句话' }, finish_reason: 'length' }],
+    }),
+  })
+  const step = await def.execute({ action: 'next', roomId: open.roomId }, {})
+
+  assertShape(def.output.schema, step)
+  assert.equal(step.truncated, true)
+  const blocks = def.output.render({}, step)
+  assert.match(blocks[0].text, /截断/)
+})
+
+test('思考默认不出现在返回值里；打开后只作旁路', async () => {
+  const { def } = await boot()
+  const open = await def.execute({ action: 'open', topic: '思考旁路' }, {})
+  globalThis.fetch = async () => ({
+    ok: true,
+    json: async () => ({ choices: [{ message: { content: '正文', reasoning_content: '内部思考' } }] }),
+  })
+  const step = await def.execute({ action: 'next', roomId: open.roomId }, {})
+
+  assertShape(def.output.schema, step)
+  assert.equal(step.thinking, undefined, '默认不下发思考')
+  assert.equal(step.text, '正文')
+  assert.doesNotMatch(def.output.render({}, step)[0].text, /内部思考/)
+})

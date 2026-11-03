@@ -299,7 +299,8 @@ test('席位的 extraBody 会合并进请求体，且能覆盖默认值', async 
   const room = openRoom(withExtra, '透传')
   await nextTurn(withExtra, room, fetchImpl)
   assert.deepEqual(body.thinking, { type: 'disabled' })
-  assert.equal(body.max_tokens, 800)
+  // max_tokens 不再固定 800，而是按 maxWordsPerTurn 反推（300 字 × 1.6 = 480）
+  assert.equal(body.max_tokens, 480)
 })
 
 test('没有 extraBody 时不额外塞字段', async () => {

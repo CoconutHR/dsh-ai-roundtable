@@ -263,3 +263,31 @@ test('未知路由 404', async () => {
   const res = await call(h, 'GET', '/dsh-roundtable/nope')
   assert.equal(res.status, 404)
 })
+
+test('思考策略能保存并回显（调度员 / 显示开关）', async () => {
+  const { h, get } = handlerWith(baseConfig())
+  await call(h, 'POST', '/dsh-roundtable/config', {
+    ...baseConfig(),
+    moderatorThinking: 'off',
+    showThinking: true,
+  })
+
+  assert.equal(get().moderatorThinking, 'off')
+  assert.equal(get().showThinking, true)
+
+  const view = await call(h, 'GET', '/dsh-roundtable/config')
+  assert.equal(view.body.config.moderatorThinking, 'off')
+  assert.equal(view.body.config.showThinking, true)
+})
+
+test('非法 moderatorThinking 回落成开启', async () => {
+  const { h, get } = handlerWith(baseConfig())
+  await call(h, 'POST', '/dsh-roundtable/config', { ...baseConfig(), moderatorThinking: '乱写' })
+  assert.equal(get().moderatorThinking, 'on')
+})
+
+test('showThinking 默认关闭，不传就是 false', async () => {
+  const { h, get } = handlerWith(baseConfig())
+  await call(h, 'POST', '/dsh-roundtable/config', { ...baseConfig() })
+  assert.equal(get().showThinking, false)
+})

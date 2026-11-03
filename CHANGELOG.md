@@ -2,6 +2,41 @@
 
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.3.0] - 2026-11-03
+
+思考通道的完整处理：正文与思考分开、预算按正文反推、截断留痕。
+
+### 新增
+
+- **思考旁路**：`showThinking`（默认关）。打开后思考以折叠块出现在对话里，**只给人看**——
+  不进 transcript、不喂给其他模型、不落盘
+- **调度员 / 发言者分开**：`moderatorThinking`（默认 `on`）只管调度与纪要，
+  席位自己的 `thinking` 只管发言。两者对推理的需求正好相反：
+  调度员要读完整场再判断，发言者要尖锐具体、别和稀泥
+- `splitMessage()` 统一抽取正文与思考，认 `reasoning_content`（DeepSeek-R1 系）、
+  `reasoning`（OpenRouter）、Anthropic 的 `thinking` 块
+
+### 修复
+
+- **预算被思考吃光时误判成网关故障**：推理模型把 `max_tokens` 全花在思考上、正文为空，
+  早先报「模型返回了空内容」并计入 `maxSeatFailures`，连续两次就把一个完全健康的席位请出讨论。
+  现在抛 `BudgetExhaustedError`，给出可操作提示（调大预算或关掉思考），且**不计入失败次数**
+- **`finish_reason: length` 完全没检查**：半句话被当成完整发言收录，后面的人会拿断句去反驳。
+  现在记录上标 `truncated`，渲染时提示「本条被长度上限截断，末尾不完整」
+- **开思考反而写不下正文**：早先固定 `maxTokens=800`，再在 Anthropic 那边硬塞 1024 的思考预算，
+  正文只剩 500 出头，中文 300 字贴着上限被截断。现在按 `maxWordsPerTurn` 反推正文预算
+  （中文 1 字 ≈ 1.5 token，取 1.6 系数），开思考时**额外加上**思考预算
+
+### 变更
+
+- `max_tokens` 不再固定 800，改为 `maxWordsPerTurn × 1.6`（下限 256）
+- `chat()` 内部改为返回 `{ text, reasoning, finishReason, truncated, usage }`（非公开 API）
+
+### 测试
+
+- 126 个用例（原 96），新增 `thinking.test.mjs`（24 个）：
+  思考隔离、预算耗尽语义、截断留痕、预算反推、角色分离
+
 ## [1.2.0] - 2026-11-03
 
 房间持久化。重启 DeepSeek 之后，昨天那场讨论还能接着说。
