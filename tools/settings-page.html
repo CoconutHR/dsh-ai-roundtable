@@ -69,10 +69,18 @@ const STYLES=[
  {id:'decision',t:'决策',d:'收敛到可执行选项，给出取舍判据',temp:0.7}]
 let state=null
 const app=document.getElementById('app')
+const TOKEN=(window.__RT_TOKEN__||'')
 const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))
 const draftify=c=>JSON.parse(JSON.stringify({...c,participants:c.participants.map(p=>({...p,apiKey:''}))}))
 
-async function api(path,opt){const r=await fetch(path,opt);const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.error||'HTTP '+r.status);return d}
+async function api(path,opt={}){
+  const headers={...(opt.headers||{})}
+  if(TOKEN)headers['X-Roundtable-Token']=TOKEN
+  const r=await fetch(path,{...opt,headers})
+  const d=await r.json().catch(()=>({}))
+  if(!r.ok)throw new Error(d.error||'HTTP '+r.status)
+  return d
+}
 
 function paint(){
   const d=state.draft
@@ -140,11 +148,16 @@ function paint(){
   </div>
 
   <div class="card plain">
-    <div class="title">预算</div>
+    <div class="title">预算与容错</div>
     <div class="row two">
       <div class="f"><label>温度</label><input type="number" step="0.1" min="0" max="2" data-f="temperature" value="${d.temperature}"></div>
-      <div class="f"><label>单次超时（秒）</label><input type="number" min="10" data-f="timeoutSec" value="${Math.round(d.timeoutMs/1000)}"></div>
+      <div class="f"><label>单次超时（秒）</label><input type="number" min="5" data-f="timeoutSec" value="${Math.round(d.timeoutMs/1000)}"></div>
     </div>
+    <div class="row two">
+      <div class="f"><label>失败重试次数</label><input type="number" min="0" max="5" data-f="maxRetries" value="${d.maxRetries}"></div>
+      <div class="f"><label>连续失败几次请出席位</label><input type="number" min="1" max="10" data-f="maxSeatFailures" value="${d.maxSeatFailures}"></div>
+    </div>
+    <div class="hint">只重试 429 / 5xx / 网络抖动，并遵守服务端的 Retry-After；401、404 这类配置错误立即失败，不浪费配额。单步预算约 ${Math.round(((d.timeoutMs||120000)/1000)*(Number(d.maxRetries||0)+1)*2)} 秒。</div>
     <div class="hint">预估：${d.participants.filter(p=>p.hasKey||p.apiKey).length} 席位 × ${d.maxRounds} 轮 + 1 次记录 = ${d.participants.filter(p=>p.hasKey||p.apiKey).length*d.maxRounds+1} 次调用</div>
   </div>
 
@@ -165,7 +178,9 @@ app.addEventListener('input',e=>{
   if(t.type==='checkbox'){state.draft[f]=t.checked;return}
   if(t.dataset.i!==undefined){const s=state.draft.participants[+t.dataset.i];if(s)s[f]=t.value}
   else if(f==='timeoutSec')state.draft.timeoutMs=Number(t.value)*1000
-  else if(['maxRounds','maxWordsPerTurn','temperature'].includes(f))state.draft[f]=Number(t.value)
+  // 空值不要转成 0：Number('')===0，早先会把温度留空存成 0.0
+  else if(['maxRounds','maxWordsPerTurn','temperature','maxRetries','maxSeatFailures'].includes(f))
+    state.draft[f]=t.value===''?'':Number(t.value)
   else state.draft[f]=t.value
 })
 

@@ -3,7 +3,7 @@
 `dsh-ai-roundtable` · 一个 DeepSeek Harness 插件。几个 AI 就同一议题展开探讨：首轮互不可见，
 之后由中立调度员决定谁发言；收场只交三样东西，判断留给你。
 
-![version](https://img.shields.io/badge/version-1.0.0-4d6bfe)
+![version](https://img.shields.io/badge/version-1.1.0-4d6bfe)
 ![license](https://img.shields.io/badge/license-MIT-green)
 ![dsh](https://img.shields.io/badge/DSH-0.2.1--rc.3-lightgrey)
 
@@ -35,7 +35,7 @@ Restart DeepSeek Harness, then open **Settings → Roundtable**, add at least tw
 *"open a roundtable about …"* in any session.
 
 Works with any OpenAI-compatible endpoint (DeepSeek, Volcengine Doubao, Zhipu GLM, Qwen, Kimi, OpenRouter, …)
-and with Anthropic's Messages API. Keys stay on your machine (`~/.dsh/roundtable.json`, mode `0600`) and are
+and with Anthropic's Messages API. Keys stay on your machine (`~/.dsh/roundtable.json`) and are
 never echoed back to the settings page.
 
 Requires DeepSeek Harness `0.2.1-rc.3` (tested). Licensed MIT.
@@ -79,12 +79,15 @@ Requires DeepSeek Harness `0.2.1-rc.3` (tested). Licensed MIT.
 ## 配置台（推荐入口）
 
 双击 `tools/打开配置台.command`（或命令行 `node tools/settings-server.mjs`），
-浏览器会自动打开 `http://127.0.0.1:8766/`。
+浏览器会自动打开**带一次性 token 的链接**，形如 `http://127.0.0.1:8766/?token=…`。
 
-- 只有本机监听，不上传任何东西
+- 只监听本机，但**只监听本机不等于安全**：你浏览的任意网页也能往 `127.0.0.1:8766` 发 POST，
+  一旦能改 `baseUrl`，所有 key 就跟着请求发到别人的服务器。所以启动时生成一次性 token，
+  打印在终端里并拼进自动打开的链接，写操作必须带上它
+- 写操作还要求 `Content-Type: application/json`（跨站表单发不出这个类型）且 `Origin` 必须是本机
 - 改完点**保存立即生效**，不用重启 DeepSeek Harness（插件每次调用都会重读配置）
-- 第一次保存会创建 `~/.dsh/roundtable.json`（权限 600），之后它以这个文件为准
-- 关掉终端窗口就停止服务
+- 第一次保存会创建 `~/.dsh/roundtable.json`，之后它以这个文件为准
+- 关掉终端窗口就停止服务，token 同时失效
 
 跑起来的样子见 `preview-settings-live.png`。
 
@@ -112,14 +115,45 @@ Requires DeepSeek Harness `0.2.1-rc.3` (tested). Licensed MIT.
 | `off` | 关闭 | 讨论类发言，快 3–4 倍、省一半 token |
 
 实测豆包 `doubao-seed-2-1-pro`：开启 43.8 秒 / 1325 tokens，关闭 11.7 秒 / 209 tokens。
-插件会按供应商翻译成真实参数（火山方舟用 `thinking.type`，OpenAI 用 `reasoning_effort`），
+插件会按供应商翻译成真实参数（火山方舟用 `thinking.type`，OpenAI 用 `reasoning_effort`，
+Anthropic 用顶层 `thinking.budget_tokens` 并自动去掉与之互斥的 `temperature`），
 认不出的网关不猜，留 `extraBody` 兜底。
+
+## 容错与重试
+
+一个席位挂了，不该让整场讨论变成独角戏。1.1.0 起：
+
+| 配置项 | 默认 | 说明 |
+|---|---|---|
+| `maxRetries` | 2 | 单次调用失败后的重试次数（0–5） |
+| `retryBaseMs` | 400 | 指数退避基数，实际延迟带 50%–100% 抖动 |
+| `maxSeatFailures` | 2 | 连续失败几次后把席位请出讨论 |
+| `timeoutMs` | 120000 | **单次 HTTP** 的超时（不再是一整步） |
+
+重试规则：
+
+- **重试**：429、500/502/503/504、408/409/425、网络层抖动（`TypeError`、`ECONNRESET` 等）、单次超时
+- **立刻失败**：401 / 403 / 404 / 422 这类配置错误 —— 重试只会白烧配额
+- **尊重 `Retry-After`**：服务端说等多久就等多久（仍受 `retryMaxMs` 上限约束）
+- **用户取消不重试**：按了停止就是停止
+
+失败与取消的记账规则也改了：
+
+- 失败的发言**不占轮次**、**不参与首轮盲区计数**、**不会把报错喂给其他模型**
+- 用户中断**不写记录**，房间保持干净，下一轮可以照常继续
+- 席位连续失败到 `maxSeatFailures` 就被**请出讨论**，调度员与兜底轮换都不再点它
+- 调度员自己挂了，兜底轮换会真的轮转（`A→B→C→A→B→C`），不再塌成同一个人反复发言
+
+单步预算（调度员 + 发言，各自带重试）按 `timeoutMs × (maxRetries+1) × 2` 自动推算，
+工具声明的 `timeoutMs` 也据此放大，不会再出现「宿主先掐断、用户拿到半截超时」。
 
 ### 配置存在哪
 
-- 用户在设置页保存的东西 → `~/.dsh/roundtable.json`（权限 600）
+- 用户在设置页保存的东西 → `~/.dsh/roundtable.json`
+  （POSIX 上是 `0600`；Windows 的 NTFS 不认 POSIX 位，靠的是用户目录本身的 ACL，别指望这个数字）
 - 一旦这个文件存在，`cordis.patch.yml` 里的 config 就只当初始种子，后续改动不再生效
 - 页面拿到的 key 永远是掩码，明文不出后端
+- **旧 key 按席位名匹配，不按数组下标继承**：删掉或改名一个席位，不会把别人的 key 顺延过来
 
 ## 怎么用
 
@@ -187,26 +221,38 @@ roundtable({action:"close", roomId:"rt-xxxx"})     → 纪要 + 全文
 ## 代码结构
 
 ```
-lib/core.js     纯逻辑：HTTP 调用、调度决策、状态机、JSON 解析。零依赖
+lib/core.js     纯逻辑：HTTP 调用、重试、调度决策、状态机、JSON 解析
 lib/index.js    Cordis 包装：defineTool 注册、参数校验、错误转人话
-test/           19 个用例，node --test 直接跑
+lib/store.js    配置存储：掩码、按名继承 key、写操作来源校验
+lib/routes.js   设置页后端：GET/POST config、试连接
+lib/client.js   DSH 内嵌设置页（浏览器 bundle）
+test/           76 个用例，node --test 直接跑
 scripts/        安装 / 卸载 profile 的幂等脚本
 ```
 
 跑测试：
 
 ```bash
-node --test test/core.test.mjs test/contract.test.mjs
+node --test test/*.test.mjs
 ```
 
+测试分四层：
+
+- `core.test.mjs` —— 纯逻辑（协议识别、地址拼接、状态机、提示词）
+- `resilience.test.mjs` —— 重试策略、失败记账、席位请出、取消语义
+- `routes.test.mjs` —— 设置页后端与写操作鉴权
+- `contract.test.mjs` —— 工具定义形状（参数 DSL、输出 schema、render 内容块）
+
 `contract.test.mjs` 用 `module.registerHooks` 把 `@deepseek-ai/dsh-tools` 换成桩，
-所以**不需要启动 DSH** 就能验证工具定义形状（参数 DSL、输出 schema、render 返回内容块）。
+所以**不需要启动 DSH** 就能验证工具契约。
 
 ## 已知限制
 
 - **房间状态在进程内**：重启应用后房间全丢；多会话共用一个 roomId 会串
 - **串行**：没标 `isConcurrencySafe`，同一时刻只能推一场
 - **一轮 = 每人各说一次**，`maxRounds: 2` 就是每人最多说两次
+- **重试会放大延迟**：一个慢席位最坏要等 `timeoutMs × (maxRetries+1)`，需要更快就把 `maxRetries` 调成 0
+- **配额按调用计**：重试是真调用，429 重试三次就是三次计费尝试（多数供应商限流请求不计费，但不保证）
 
 ## 卸载
 
@@ -226,8 +272,8 @@ python3 scripts/uninstall-profile.py          # 加 --dry-run 先看会改什么
 数据流向、密钥存储、费用、商标与许可条件见 [DECLARATION.md](DECLARATION.md)。要点：
 
 - 讨论内容只发送到**你自己配置的模型服务商**，插件不回传任何数据、无遥测
-- 密钥存本机 `~/.dsh/roundtable.json`（`0600`），页面只显示掩码
-- API 费用由你的账号承担，插件不代收
+- 密钥存本机 `~/.dsh/roundtable.json`，页面只显示掩码；写配置需要本机来源 + 一次性 token
+- API 费用由你的账号承担，插件不代收；重试会产生额外的真实调用
 - 与 OpenAI / Anthropic / 字节 / 深度求索无隶属关系
 
 ## 附：DSH 插件开发要点（来自官方文档）

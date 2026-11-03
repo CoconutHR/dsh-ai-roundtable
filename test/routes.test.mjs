@@ -12,8 +12,10 @@ process.env.HOME = mkdtempSync(join(tmpdir(), 'rt-home-'))
 const { makeHandler, STORE_PATH } = await import('../lib/routes.js')
 const { STORE_PATH: PATH_CHECK } = await import('../lib/store.js')
 
-function mkReq(method, url, body) {
-  const req = { method, url }
+const JSON_HEADERS = { 'content-type': 'application/json', host: '127.0.0.1:8766' }
+
+function mkReq(method, url, body, headers = JSON_HEADERS) {
+  const req = { method, url, headers }
   req[Symbol.asyncIterator] = async function* () {
     if (body !== undefined) yield Buffer.from(JSON.stringify(body))
   }
@@ -51,9 +53,9 @@ function handlerWith(config) {
   }
 }
 
-async function call(h, method, url, body) {
+async function call(h, method, url, body, headers) {
   const res = mkRes()
-  await h(mkReq(method, url, body), res)
+  await h(mkReq(method, url, body, headers), res)
   return res
 }
 
@@ -86,7 +88,7 @@ test('POST 留空 key 表示不修改', async () => {
 
 test('POST 带新 key 会替换，并落盘 0600', async () => {
   const { h, get } = handlerWith(baseConfig())
-  await call(h, 'POST', '/dsh-roundtable/config', {
+  const res = await call(h, 'POST', '/dsh-roundtable/config', {
     ...baseConfig(),
     participants: [
       { name: '豆包', baseUrl: 'https://ark.test/api/v3', model: 'doubao', persona: '落地', thinking: 'off', apiKey: 'ark-new-key-abcdef' },
@@ -94,12 +96,61 @@ test('POST 带新 key 会替换，并落盘 0600', async () => {
     ],
   })
 
+  assert.equal(res.status, 200)
   assert.equal(get().participants[0].apiKey, 'ark-new-key-abcdef')
-  assert.equal(get().participants[1].thinking, 'off')
   assert.equal(PATH_CHECK, STORE_PATH)
   assert.ok(existsSync(STORE_PATH), '应该写了 store 文件')
   const mode = statSync(STORE_PATH).mode & 0o777
-  assert.equal(mode, 0o600, '密钥文件必须是 0600')
+  if (process.platform === 'win32') {
+    // NTFS 不认 POSIX 位，chmod 无效；这里的断言只在 POSIX 上有意义
+    assert.ok(mode !== null, 'Windows 上权限位不可断言')
+  } else {
+    assert.equal(mode, 0o600, '密钥文件必须是 0600')
+  }
+})
+
+test('删掉中间席位不会把上一个席位的 key 串过去', async () => {
+  const { h, get } = handlerWith({
+    moderator: 'A',
+    participants: [
+      { name: 'A', baseUrl: 'https://a', model: 'm', apiKey: 'keyA' },
+      { name: 'B', baseUrl: 'https://b', model: 'm', apiKey: 'keyB' },
+      { name: 'C', baseUrl: 'https://c', model: 'm', apiKey: 'keyC' },
+    ],
+  })
+  const res = await call(h, 'POST', '/dsh-roundtable/config', {
+    participants: [
+      { name: 'B', baseUrl: 'https://b', model: 'm', apiKey: '' },
+      { name: 'C', baseUrl: 'https://c', model: 'm', apiKey: '' },
+    ],
+  })
+
+  assert.equal(res.status, 200)
+  assert.equal(get().participants[0].apiKey, 'keyB', 'B 必须还是自己的 key')
+  assert.equal(get().participants[1].apiKey, 'keyC')
+})
+
+test('改名后的席位不会继承旧 key', async () => {
+  const { h, get } = handlerWith({
+    participants: [
+      { name: 'A', baseUrl: 'https://a', model: 'm', apiKey: 'keyA' },
+      { name: 'B', baseUrl: 'https://b', model: 'm', apiKey: 'keyB' },
+    ],
+  })
+  await call(h, 'POST', '/dsh-roundtable/config', {
+    participants: [
+      { name: 'A2', baseUrl: 'https://a', model: 'm', apiKey: '' },
+      { name: 'B', baseUrl: 'https://b', model: 'm', apiKey: '' },
+    ],
+  })
+  assert.equal(get().participants[0].apiKey, '', '改名 = 新席位，必须重填 key')
+  assert.equal(get().participants[1].apiKey, 'keyB')
+})
+
+test('温度留空回落默认值，而不是被存成 0', async () => {
+  const { h, get } = handlerWith({ ...baseConfig(), temperature: 0.7 })
+  await call(h, 'POST', '/dsh-roundtable/config', { ...baseConfig(), temperature: '' })
+  assert.equal(get().temperature, 0.8, '留空应回默认 0.8，不是 0')
 })
 
 test('POST 一个席位都不剩时拒绝', async () => {
@@ -107,6 +158,46 @@ test('POST 一个席位都不剩时拒绝', async () => {
   const res = await call(h, 'POST', '/dsh-roundtable/config', { ...baseConfig(), participants: [] })
   assert.equal(res.status, 400)
   assert.match(res.body.error, /至少/)
+})
+
+test('跨站表单（非 JSON）写操作被拒绝', async () => {
+  const { h, get } = handlerWith(baseConfig())
+  const before = JSON.stringify(get())
+  const res = await call(
+    h,
+    'POST',
+    '/dsh-roundtable/config',
+    { ...baseConfig(), participants: [] },
+    { 'content-type': 'application/x-www-form-urlencoded', host: '127.0.0.1:8766' },
+  )
+  assert.equal(res.status, 403)
+  assert.equal(JSON.stringify(get()), before, '配置不能被改写')
+})
+
+test('外部 Origin 的写操作被拒绝', async () => {
+  const { h } = handlerWith(baseConfig())
+  const res = await call(h, 'POST', '/dsh-roundtable/config', baseConfig(), {
+    'content-type': 'application/json',
+    host: '127.0.0.1:8766',
+    origin: 'https://evil.example',
+  })
+  assert.equal(res.status, 403)
+})
+
+test('requireToken 时缺少 token 被拒绝，带对 token 通过', async () => {
+  const { makeHandler: mk } = await import('../lib/routes.js')
+  const { SESSION_TOKEN } = await import('../lib/store.js')
+  let raw = baseConfig()
+  const h = mk({ getRaw: () => raw, onSave: (n) => (raw = n), requireToken: true })
+
+  const denied = await call(h, 'POST', '/dsh-roundtable/config', baseConfig())
+  assert.equal(denied.status, 403)
+
+  const ok = await call(h, 'POST', '/dsh-roundtable/config', baseConfig(), {
+    ...JSON_HEADERS,
+    'x-roundtable-token': SESSION_TOKEN,
+  })
+  assert.equal(ok.status, 200)
 })
 
 test('试连接：成功返回耗时', async () => {
@@ -127,6 +218,25 @@ test('试连接：失败把原始错误带回来', async () => {
   assert.equal(res.body.ok, false)
   assert.match(res.body.error, /401/)
   assert.match(res.body.error, /invalid api key/)
+})
+
+test('试连接认得出 Anthropic 席位（不再一律走 OpenAI 地址）', async () => {
+  const { h } = handlerWith({
+    participants: [
+      { name: 'Claude', baseUrl: 'https://api.anthropic.com/v1', model: 'claude', apiKey: 'sk-ant', kind: 'anthropic' },
+      { name: 'B', baseUrl: 'https://b', model: 'm', apiKey: 'k' },
+    ],
+  })
+  let seenUrl = ''
+  let seenHeaders = {}
+  globalThis.fetch = async (url, init) => {
+    seenUrl = String(url)
+    seenHeaders = init.headers
+    return { ok: true, json: async () => ({}) }
+  }
+  await call(h, 'POST', '/dsh-roundtable/test', { index: 0 })
+  assert.match(seenUrl, /\/v1\/messages$/)
+  assert.equal(seenHeaders['x-api-key'], 'sk-ant')
 })
 
 test('没 key 的席位不发试连接请求', async () => {

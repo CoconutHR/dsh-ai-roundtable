@@ -181,19 +181,36 @@ test('render 返回内容块数组，且错误态可说人话', async () => {
   assert.match(blocks[0].text, /缺少 apiKey/)
 })
 
-test('外部取消信号会传到 fetch', async () => {
+test('外部取消信号会传到 fetch，且中断不写进记录', async () => {
   const { def } = await boot()
   const open = await def.execute({ action: 'open', topic: '取消测试' }, {})
   const ac = new AbortController()
-  ac.abort()
   let seenSignal = null
   globalThis.fetch = async (_url, init) => {
     seenSignal = init.signal
+    // 请求发出后用户才点停止：模拟真实的中途取消
+    ac.abort()
     throw new DOMException('aborted', 'AbortError')
   }
   const step = await def.execute({ action: 'next', roomId: open.roomId }, { signal: ac.signal })
   assert.ok(seenSignal, 'fetch 应该收到 signal')
-  assert.match(step.text ?? step.error, /调用失败|失败|abort/i)
+  assert.equal(step.aborted, true, '取消应该被单独标记，而不是记成发言失败')
+  assert.equal(step.text, '', '取消不该产生一条「调用失败」的发言')
+})
+
+test('已经取消的调用不再发请求', async () => {
+  const { def } = await boot()
+  const open = await def.execute({ action: 'open', topic: '预先取消' }, {})
+  const ac = new AbortController()
+  ac.abort()
+  let called = false
+  globalThis.fetch = async () => {
+    called = true
+    return json('不该被调用')
+  }
+  const step = await def.execute({ action: 'next', roomId: open.roomId }, { signal: ac.signal })
+  assert.equal(called, false, '取消后不该再打上游')
+  assert.equal(step.aborted, true)
 })
 
 test('config 动作能读出当前配置与 key 状态', async () => {
